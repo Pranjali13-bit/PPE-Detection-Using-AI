@@ -995,4 +995,18 @@ if __name__=="__main__":
     logger.info(f"  YOLO: {YOLO_AVAILABLE}  |  Model: {state['model_loaded']}")
     logger.info("  → http://127.0.0.1:5000")
     logger.info("="*55)
-    app.run(host="0.0.0.0",port=5000,debug=False,threaded=True)
+   import os
+
+if __name__ == "__main__":
+    logger.info("="*55)
+    logger.info(" AI PPE Detection System v2.0 - Pinterest Edition")
+    logger.info("="*55)
+
+    load_model()
+
+    logger.info(f" YOLO: {YOLO_AVAILABLE} | Model: {state['model_loaded']}")
+    
+    port = int(os.environ.get("PORT", 8000))
+    logger.info(f" Running on port: {port}")
+
+    app.run(host="0.0.0.0", port=port)
