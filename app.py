@@ -101,6 +101,8 @@ def load_model():
     except Exception as e:
         logger.error(f"Model load failed: {e}")
 
+load_model()
+
 # ── Draw box ───────────────────────────────────────────────────────────────────
 def draw_box(frame, x1,y1,x2,y2, label, conf, color):
     cv2.rectangle(frame,(x1,y1),(x2,y2),color,2)
@@ -987,26 +989,3 @@ onSrcChange();
 </body>
 </html>"""
 
-if __name__=="__main__":
-    logger.info("="*55)
-    logger.info("  AI PPE Detection System v2.0 — Pinterest Edition")
-    logger.info("="*55)
-    load_model()
-    logger.info(f"  YOLO: {YOLO_AVAILABLE}  |  Model: {state['model_loaded']}")
-    logger.info("  → http://127.0.0.1:5000")
-    logger.info("="*55)
-   import os
-
-if __name__ == "__main__":
-    logger.info("="*55)
-    logger.info(" AI PPE Detection System v2.0 - Pinterest Edition")
-    logger.info("="*55)
-
-    load_model()
-
-    logger.info(f" YOLO: {YOLO_AVAILABLE} | Model: {state['model_loaded']}")
-    
-    port = int(os.environ.get("PORT", 8000))
-    logger.info(f" Running on port: {port}")
-
-    app.run(host="0.0.0.0", port=port)
