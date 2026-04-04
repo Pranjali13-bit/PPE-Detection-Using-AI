@@ -101,8 +101,6 @@ def load_model():
     except Exception as e:
         logger.error(f"Model load failed: {e}")
 
-load_model()
-
 # ── Draw box ───────────────────────────────────────────────────────────────────
 def draw_box(frame, x1,y1,x2,y2, label, conf, color):
     cv2.rectangle(frame,(x1,y1),(x2,y2),color,2)
@@ -315,6 +313,9 @@ def gen_frames():
 @app.route("/video_feed")
 def video_feed():
     return Response(gen_frames(),mimetype="multipart/x-mixed-replace; boundary=frame")
+
+# ── Module-level startup (safe for gunicorn and direct python app.py) ─────────
+load_model()
 
 # ─────────────────────────────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
@@ -989,3 +990,11 @@ onSrcChange();
 </body>
 </html>"""
 
+if __name__ == "__main__":
+    logger.info("=" * 55)
+    logger.info("  AI PPE Detection System v2.0 — Pinterest Edition")
+    logger.info("=" * 55)
+    logger.info(f"  YOLO: {YOLO_AVAILABLE}  |  Model: {state['model_loaded']}")
+    logger.info("  → http://0.0.0.0:5000")
+    logger.info("=" * 55)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
