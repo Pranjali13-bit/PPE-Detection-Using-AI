@@ -81,20 +81,68 @@ COUNT_MAP = {
     "person":"person",
 }
 
+# ── PPE Model auto-downloader ──────────────────────────────────────────────────
+def download_ppe_model():
+    """Download a YOLOv8 model pre-trained on full PPE detection (helmet, vest, gloves, glasses, shoes)."""
+    import urllib.request
+
+    # Priority order — best full-PPE models first
+    # keremberke/yolov8m-ppe-detection: helmet, gloves, boots, ppe-suit, vest, hardhat, mask
+    # keremberke/yolov8n-ppe-detection:  same classes, lighter/faster
+    # hard-hat fallback: helmet + head only
+    CANDIDATES = [
+        ("ppe_model.pt", "https://huggingface.co/keremberke/yolov8m-ppe-detection/resolve/main/best.pt"),
+        ("ppe_model.pt", "https://huggingface.co/keremberke/yolov8n-ppe-detection/resolve/main/best.pt"),
+        ("ppe_model.pt", "https://huggingface.co/keremberke/yolov8n-hard-hat-detection/resolve/main/best.pt"),
+    ]
+    for fname, url in CANDIDATES:
+        try:
+            logger.info(f"Trying PPE model: {url}")
+            urllib.request.urlretrieve(url, fname)
+            # Verify it's a real model file (>500KB)
+            if os.path.getsize(fname) > 500_000:
+                logger.info(f"Downloaded PPE model ({os.path.getsize(fname)//1024}KB) → {fname}")
+                return fname
+            else:
+                os.remove(fname)
+                logger.warning(f"File too small, skipping: {url}")
+        except Exception as e:
+            logger.warning(f"Download failed ({url}): {e}")
+    return None
+
 # ── Model loader ───────────────────────────────────────────────────────────────
 def load_model():
     global model
     if not YOLO_AVAILABLE:
         return
-    for candidate in ["ppe_model.pt","best.pt","yolov8n.pt"]:
+    # Priority: custom trained > downloaded PPE > fallback yolov8n
+    for candidate in ["ppe_model.pt", "best.pt"]:
         if os.path.exists(candidate):
             try:
-                model = YOLO(candidate)
+                m = YOLO(candidate)
+                names = list(m.names.values())
+                logger.info(f"Loaded: {candidate} | Classes: {names}")
+                model = m
                 state["model_loaded"] = True
-                logger.info(f"Loaded: {candidate}")
                 return
             except Exception as e:
                 logger.error(f"Cannot load {candidate}: {e}")
+
+    # Try to download a real PPE model automatically
+    logger.info("No PPE model found — attempting auto-download ...")
+    downloaded = download_ppe_model()
+    if downloaded and os.path.exists(downloaded):
+        try:
+            m = YOLO(downloaded)
+            logger.info(f"PPE model loaded! Classes: {list(m.names.values())}")
+            model = m
+            state["model_loaded"] = True
+            return
+        except Exception as e:
+            logger.error(f"Cannot load downloaded model: {e}")
+
+    # Final fallback: yolov8n (will only detect 'person')
+    logger.warning("Using yolov8n.pt — only 'person' class available. PPE items won't be detected!")
     try:
         model = YOLO("yolov8n.pt")
         state["model_loaded"] = True
@@ -104,10 +152,84 @@ def load_model():
 # ── Draw box ───────────────────────────────────────────────────────────────────
 def draw_box(frame, x1,y1,x2,y2, label, conf, color):
     cv2.rectangle(frame,(x1,y1),(x2,y2),color,2)
-    txt = f"{label} {conf:.0%}"
+    conf_pct = int(round(conf * 100))
+    txt = f"{label} {conf_pct}%"
     (tw,th),_ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
     cv2.rectangle(frame,(x1,y1-th-8),(x1+tw+8,y1),color,-1)
     cv2.putText(frame,txt,(x1+4,y1-4),cv2.FONT_HERSHEY_SIMPLEX,0.5,(255,255,255),1,cv2.LINE_AA)
+
+# Class name aliases — maps any model's class names → our internal names
+# keremberke/yolov8m-ppe-detection outputs:
+#   'Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
+#   'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle'
+# keremberke/yolov8n-hard-hat-detection outputs:
+#   'helmet', 'head'   (head = no helmet)
+_ALIAS = {
+    # ── Helmet ──
+    "hard_hat":             "helmet",
+    "hardhat":              "helmet",
+    "helmet_on":            "helmet",
+    "with_helmet":          "helmet",
+    "safety_helmet":        "helmet",
+    # ── No Helmet ──
+    "no_hard_hat":          "no_helmet",
+    "no_hardhat":           "no_helmet",
+    "no-hardhat":           "no_helmet",
+    "without_helmet":       "no_helmet",
+    "head":                 "no_helmet",   # keremberke hard-hat model
+    # ── Vest ──
+    "safety_vest":          "vest",
+    "no-safety_vest":       "vest",        # some models label it wrong
+    "hi_vis":               "vest",
+    "hivis":                "vest",
+    "high_vis":             "vest",
+    "reflective_vest":      "vest",
+    "vest_":                "vest",
+    # ── No Vest ──
+    "no_safety_vest":       "no_vest",
+    "no-safety_vest_":      "no_vest",
+    "no_vest_":             "no_vest",
+    # ── Gloves ──
+    "glove":                "gloves",
+    "safety_gloves":        "gloves",
+    "hand_protection":      "gloves",
+    # ── No Gloves ──
+    "no_gloves_":           "no_gloves",
+    "no_glove":             "no_gloves",
+    # ── Glasses / Eye protection ──
+    "safety_glasses":       "glasses",
+    "goggles":              "glasses",
+    "eye_protection":       "glasses",
+    "mask":                 "glasses",     # face mask → map to glasses slot
+    "face_shield":          "glasses",
+    # ── No Glasses ──
+    "no_safety_glasses":    "no_glasses",
+    "no_mask":              "no_glasses",
+    "no-mask":              "no_glasses",
+    # ── Safety Shoes / Boots ──
+    "safety_shoe":          "safety_shoes",
+    "boot":                 "safety_shoes",
+    "boots":                "safety_shoes",
+    "safety_boot":          "safety_shoes",
+    "safety_boots":         "safety_shoes",
+    "steel_toe":            "safety_shoes",
+    # ── No Shoes ──
+    "no_safety_shoe":       "no_safety_shoes",
+    "no_boot":              "no_safety_shoes",
+    "no_boots":             "no_safety_shoes",
+    # ── Person variants ──
+    "worker":               "person",
+    "human":                "person",
+    "people":               "person",
+    "pedestrian":           "person",
+    # ── Ignore non-PPE classes from full-PPE models ──
+    "safety_cone":          "__ignore__",
+    "cone":                 "__ignore__",
+    "machinery":            "__ignore__",
+    "vehicle":              "__ignore__",
+    "car":                  "__ignore__",
+    "truck":                "__ignore__",
+}
 
 # ── YOLO inference ─────────────────────────────────────────────────────────────
 def run_yolo(frame):
@@ -115,27 +237,71 @@ def run_yolo(frame):
     counts = {k:0 for k in state["counts"]}
     if model is None:
         return frame, alerts, counts, dets
-    results = model(frame, conf=0.35, iou=0.45, verbose=False)
+
+    # Track which persons already have a helmet to avoid double "no helmet" alerts
+    person_boxes   = []   # (x1,y1,x2,y2) of detected persons
+    helmet_boxes   = []   # (x1,y1,x2,y2) of detected helmets
+    no_helmet_boxes= []   # (x1,y1,x2,y2) of detected bare-heads
+
+    results = model(frame, conf=0.25, iou=0.45, verbose=False)
+
+    # First pass — collect all raw detections
+    raw_dets = []
     for r in results:
         for box in r.boxes:
             conf = float(box.conf[0])
             cls  = int(box.cls[0])
-            raw  = model.names[cls].lower().replace(" ","_")
+            # Normalize: lowercase, spaces→underscore, strip hyphens for alias lookup
+            name = model.names[cls].lower().replace(" ","_").replace("-","_")
+            name = _ALIAS.get(name, name)
+            if name == "__ignore__":
+                continue   # skip cones, vehicles, etc.
             x1,y1,x2,y2 = map(int, box.xyxy[0])
-            info = PPE_CLASSES.get(raw)
-            if info is None:
-                if cls == 0:
-                    info = PPE_CLASSES["person"]; raw = "person"
-                else:
-                    continue
+            raw_dets.append((name, cls, conf, x1,y1,x2,y2))
+
+    # --- Person count: infer from helmet+head boxes if no explicit person class ---
+    explicit_persons = [d for d in raw_dets if d[0] == "person"]
+    head_boxes       = [d for d in raw_dets if d[0] in ("helmet","no_helmet")]
+
+    if explicit_persons:
+        counts["person"] = len(explicit_persons)
+    elif head_boxes:
+        # Each head/helmet box = 1 person
+        counts["person"] = len(head_boxes)
+    
+    # Second pass — draw and count everything
+    for (name, cls, conf, x1,y1,x2,y2) in raw_dets:
+
+        # Skip drawing raw person boxes if we only got them via head inference
+        # (they look odd — bounding box is just on face)
+        if name == "person":
+            info = PPE_CLASSES["person"]
             disp, color, safe, alert_msg = info
             draw_box(frame,x1,y1,x2,y2,disp,conf,color)
-            ck = COUNT_MAP.get(raw,"person")
-            if ck in counts: counts[ck] += 1
-            if alert_msg:
-                alerts.append({"msg":"⚠ "+alert_msg,"level":"danger","time":time.strftime("%H:%M:%S")})
-            dets.append({"label":raw,"display":disp,"conf":conf,"safe":safe,
+            dets.append({"label":"person","display":disp,"conf":conf,"safe":True,
                          "color":"#{:02x}{:02x}{:02x}".format(*color[::-1])})
+            continue
+
+        info = PPE_CLASSES.get(name)
+        if info is None:
+            # Unknown class — draw grey box so user can see what model detects
+            draw_box(frame,x1,y1,x2,y2,model.names[cls],conf,(130,130,130))
+            continue
+
+        disp, color, safe, alert_msg = info
+        draw_box(frame,x1,y1,x2,y2,disp,conf,color)
+        ck = COUNT_MAP.get(name, "person")
+        if ck in counts:
+            counts[ck] += 1
+
+        # Only fire alerts for genuinely unsafe detections (not vest/glasses/shoes — model doesn't detect those)
+        unsafe_classes = {"no_helmet", "no_vest", "no_harness", "no_safety_shoes", "no_gloves", "no_glasses"}
+        if alert_msg and name in unsafe_classes:
+            alerts.append({"msg":"⚠ "+alert_msg,"level":"danger","time":time.strftime("%H:%M:%S")})
+
+        dets.append({"label":name,"display":disp,"conf":conf,"safe":safe,
+                     "color":"#{:02x}{:02x}{:02x}".format(*color[::-1])})
+
     return frame, alerts, counts, dets
 
 # ── Demo simulation ────────────────────────────────────────────────────────────
